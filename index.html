@@ -69,6 +69,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 .cal-day.empty{border:none;cursor:default;}
 .cal-day.me-yes{background:var(--green);border-color:var(--green);color:white;}
 .cal-day.me-no{background:#fee;border-color:#fcc;}
+.cal-day.me-maybe{background:#ffe0b2;border-color:#ff9800;}
 .cal-day.me-partial{background:#fff3cd;border-color:#ffc107;}
 .cal-day.all-yes{outline:3px solid gold;font-weight:bold;}
 .dot-row{display:flex;gap:2px;margin-top:2px;flex-wrap:wrap;justify-content:center;}
@@ -95,6 +96,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 .slot-btns{display:flex;gap:6px;}
 .slot-btn{padding:7px 18px;border-radius:20px;border:2px solid var(--bd);background:white;cursor:pointer;font-size:.85rem;font-weight:bold;transition:all .15s;}
 .slot-btn.yes{background:var(--green);border-color:var(--green);color:white;}
+.slot-btn.maybe{background:#ff9800;border-color:#ff9800;color:white;}
 .slot-btn.no{background:#fee;border-color:#f99;color:#c00;}
 .slot-btn.un{background:#f5f5f5;border-color:#ddd;color:#999;}
 .dots-preview{display:flex;gap:4px;margin-top:10px;flex-wrap:wrap;}
@@ -109,6 +111,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 .matrix-tbl .date-col{text-align:left;font-weight:bold;background:#fafaf7;min-width:80px;}
 .matrix-tbl .slot-col{color:var(--primary);font-weight:bold;background:#fafaf7;font-size:.68rem;min-width:28px;}
 .mc-yes{color:var(--green);font-weight:bold;font-size:.88rem;}
+.mc-maybe{color:#ff9800;font-weight:bold;font-size:.88rem;}
 .mc-no{color:#e53;font-size:.88rem;}
 .mc-un{color:#ccc;font-size:.88rem;}
 .mc-cnt{font-weight:bold;font-size:.82rem;}
@@ -254,7 +257,8 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
     <div class="sec-lbl">タップして 午前・午後・夜 ごとに○✕を設定</div>
     <div class="cal-grid" id="calGrid"></div>
     <div class="legend">
-      <div class="legend-item"><div class="legend-sq" style="background:var(--green)"></div>全部OK</div>
+      <div class="legend-item"><div class="legend-sq" style="background:var(--green)"></div>全部○</div>
+      <div class="legend-item"><div class="legend-sq" style="background:#ffe0b2;border:1px solid #ff9800"></div>調整すれば○(▲)</div>
       <div class="legend-item"><div class="legend-sq" style="background:#fff3cd;border:1px solid #ffc107"></div>一部OK</div>
       <div class="legend-item"><div class="legend-sq" style="background:#fee;border:1px solid #fcc"></div>難しい</div>
       <div class="legend-item"><div class="legend-sq" style="background:var(--bd)"></div>未回答</div>
@@ -433,7 +437,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 
 <script>
 // ===== バージョン管理（古いキャッシュを自動排除）=====
-const APP_VERSION = '20260520-5';
+const APP_VERSION = '20260521-1';
 (function(){
   const stored = localStorage.getItem('appVersion');
   if(stored !== APP_VERSION){
@@ -751,7 +755,7 @@ function hasEnteredAvail(name){
     const v=dayAvail[name];
     if(!v) return false;
     if(typeof v==='boolean') return true;
-    return Object.values(v).some(x=>x===true||x===false);
+    return Object.values(v).some(x=>x===true||x===false||x==='maybe');
   });
 }
 
@@ -800,9 +804,12 @@ function myDayStatus(ds){
   const vals=SLOTS.map(s=>v[s.key]).filter(x=>x!==undefined);
   if(!vals.length) return 'none';
   const trues=vals.filter(x=>x===true).length;
-  if(trues===vals.length) return 'yes';
-  if(trues===0) return 'no';
-  return 'partial';
+  const maybes=vals.filter(x=>x==='maybe').length;
+  const falses=vals.filter(x=>x===false).length;
+  if(trues===vals.length) return 'yes';              // 全部○
+  if(falses===vals.length) return 'no';              // 全部✕
+  if(falses===0 && maybes>0) return 'maybe';         // ▲あり・✕なし
+  return 'partial';                                  // 混在
 }
 function personDotStatus(ds,p){
   const v=(avail[ds]||{})[p.name];
@@ -810,9 +817,9 @@ function personDotStatus(ds,p){
   if(typeof v==='boolean') return v?p.color:'#fcc';
   const vals=SLOTS.map(s=>v[s.key]).filter(x=>x!==undefined);
   if(!vals.length) return '#ddd';
-  const trues=vals.filter(x=>x===true).length;
-  if(trues===0) return '#fcc';
-  return p.color;
+  const falses=vals.filter(x=>x===false).length;
+  if(falses===vals.length) return '#fcc';            // 全部✕
+  return p.color;                                    // ○か▲があれば参加可能色
 }
 
 function renderCalendar(){
@@ -831,13 +838,14 @@ function renderCalendar(){
     let cls='cal-day';
     if(st==='yes') cls+=' me-yes';
     else if(st==='no') cls+=' me-no';
+    else if(st==='maybe') cls+=' me-maybe';
     else if(st==='partial') cls+=' me-partial';
     if(allY) cls+=' all-yes';
     const nc=st==='yes'?'white':st==='no'?'#c00':wday===0?'#c00':wday===6?'#1a6bcc':'inherit';
     // slot pips for current person
     const pips=SLOTS.map(s=>{
       const sv=getSlot(ds,curPerson,s.key);
-      const bg=sv===true?'var(--green)':sv===false?'#f99':'#ddd';
+      const bg=sv===true?'var(--green)':sv==='maybe'?'#ff9800':sv===false?'#f99':'#ddd';
       return `<div class="slot-pip" style="background:${bg}" title="${s.lbl}"></div>`;
     }).join('');
     const dayEvs=getCalEventsForDate(ds);
@@ -882,6 +890,7 @@ function refreshModalSlots(){
       <div class="slot-lbl">${s.lbl}</div>
       <div class="slot-btns">
         <button class="slot-btn ${v===true?'yes':''}" onclick="setSlot('${ds}','${s.key}',true)">○</button>
+        <button class="slot-btn ${v==='maybe'?'maybe':''}" onclick="setSlot('${ds}','${s.key}','maybe')">▲</button>
         <button class="slot-btn ${v===false?'no':''}" onclick="setSlot('${ds}','${s.key}',false)">✕</button>
         <button class="slot-btn ${v===undefined?'un':''}" onclick="setSlot('${ds}','${s.key}',null)">未</button>
       </div>
@@ -897,7 +906,7 @@ function refreshModalSlots(){
       if(!v) sv=undefined;
       else if(typeof v==='boolean') sv=v;
       else sv=v[s.key];
-      const bg=sv===true?p.color:sv===false?'#fcc':'#ddd';
+      const bg=sv===true?p.color:sv==='maybe'?'#ff9800':sv===false?'#fcc':'#ddd';
       return `<div class="slot-pip" style="background:${bg};width:6px;height:6px" title="${s.lbl}"></div>`;
     }).join('');
     return `<div class="dp-item">
@@ -935,7 +944,8 @@ function getSlotVal(ds,person,slotKey){
 }
 function slotOkCount(ds,slotKey){
   const ppl=allPeople();
-  return ppl.filter(p=>getSlotVal(ds,p.name,slotKey)===true).length;
+  // ▲（maybe）は○と同じく「参加可能」としてカウント
+  return ppl.filter(p=>{const v=getSlotVal(ds,p.name,slotKey);return v===true||v==='maybe';}).length;
 }
 
 // 候補スパン計算（マトリクスと候補カードで共用）
@@ -1019,7 +1029,7 @@ function renderMatrix(){
             `<span style="${rs?`color:${rs.textColor};font-weight:bold`:''}">${s.lbl}</span></td>`;
       ppl.forEach(p=>{
         const sv=getSlotVal(ds,p.name,s.key);
-        const icon=sv===true?`<span class="mc-yes">○</span>`:sv===false?`<span class="mc-no">✕</span>`:`<span class="mc-un">－</span>`;
+        const icon=sv===true?`<span class="mc-yes">○</span>`:sv==='maybe'?`<span class="mc-maybe">▲</span>`:sv===false?`<span class="mc-no">✕</span>`:`<span class="mc-un">－</span>`;
         html+=`<td style="${rs?`background:${rs.bg}`:''}">` + icon + `</td>`;
       });
       html+=`<td style="${rs?`background:${rs.bg}`:''}"><span class="mc-cnt" style="color:${cntColor}">${okCnt}/${tot}</span></td>`;
@@ -1110,7 +1120,7 @@ function renderCandidates(dates){
     const ngPeople=ppl.filter(p=>{
       return !span.some(ds=>{
         const slots=SLOTS.map(s=>getSlotVal(ds,p.name,s.key));
-        return slots.some(x=>x===true);
+        return slots.some(x=>x===true||x==='maybe'); // ▲も参加可能として扱う
       });
     });
     const ngHtml=ngPeople.length
