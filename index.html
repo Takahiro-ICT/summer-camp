@@ -439,7 +439,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 
 <script>
 // ===== バージョン管理（古いキャッシュを自動排除）=====
-const APP_VERSION = '20260522-5';
+const APP_VERSION = '20260522-6';
 (function(){
   const stored = localStorage.getItem('appVersion');
   if(stored !== APP_VERSION){
@@ -1040,12 +1040,8 @@ const RANK_STYLE=[
 function renderMatrix(){
   const ppl=allPeople();
   const tot=ppl.length;
-  const scheduleDays=getAllScheduleDays();
-  // 合宿期間が設定されている場合はその範囲内のみ表示。未設定なら全avail日付を表示
-  const dates=Object.keys(avail)
-    .filter(ds=>Object.keys(avail[ds]).length>0)
-    .filter(ds=>!scheduleDays.length||scheduleDays.includes(ds))
-    .sort();
+  // 参加可否が入力された全日付を表示（期間外の日程も候補として確認できるよう全件表示）
+  const dates=Object.keys(avail).filter(ds=>Object.keys(avail[ds]).length>0).sort();
   if(!dates.length){
     document.getElementById('bestDays').innerHTML='<p style="color:var(--muted);font-size:.81rem">まだ回答がありません。カレンダーの日付をタップして○✕を入力してください。</p>';
     renderCandidates([]);
