@@ -194,7 +194,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 
 /* CAL EVENTS */
 .cev-row{display:flex;gap:2px;flex-wrap:wrap;justify-content:center;margin-top:2px;}
-.cev-tag{font-size:.42rem;border-radius:2px;padding:0 3px;line-height:1.7;color:white;font-weight:bold;max-width:90%;overflow:hidden;white-space:nowrap;}
+.cev-tag{font-size:.6rem;border-radius:3px;padding:1px 4px;line-height:1.6;color:white;font-weight:bold;max-width:95%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
 
 /* SETTINGS */
 .fam-hd{font-size:.78rem;font-weight:bold;margin-bottom:5px;padding:4px 7px;border-radius:5px;color:white;}
@@ -439,7 +439,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 
 <script>
 // ===== バージョン管理（古いキャッシュを自動排除）=====
-const APP_VERSION = '20260522-2';
+const APP_VERSION = '20260522-4';
 (function(){
   const stored = localStorage.getItem('appVersion');
   if(stored !== APP_VERSION){
@@ -545,6 +545,7 @@ let curPerson     = ld('curPerson', DEFAULT_FAMILIES[0].members[0]);
 let noteAuthor    = curPerson;
 let packCat       = 'all';
 let curDay        = null;
+let curRangeId    = null; // 予定表で選択中の期間ID
 let calYear       = 2026;
 let calMonth      = 6;
 let modalDay      = null;
@@ -575,6 +576,13 @@ function migrateData(){
   // 旧dateRange → dateRanges配列に自動移行
   if(dateRange && dateRange.start && (!dateRanges || !dateRanges.length)){
     dateRanges=[{id:1, start:dateRange.start, end:dateRange.end}];
+    changed=true;
+  }
+  // 旧events形式（キーが日付文字列）→ 新形式（{rangeId: {date: [...]}}）に自動移行
+  const evKeys=Object.keys(events);
+  if(evKeys.length>0 && evKeys[0].includes('-') && evKeys[0].length===10){
+    const rid=(dateRanges&&dateRanges.length)?dateRanges[0].id:'legacy';
+    events={[rid]:events};
     changed=true;
   }
   if(changed) saveAll();
@@ -1001,7 +1009,12 @@ const RANK_STYLE=[
 function renderMatrix(){
   const ppl=allPeople();
   const tot=ppl.length;
-  const dates=Object.keys(avail).filter(ds=>Object.keys(avail[ds]).length>0).sort();
+  const scheduleDays=getAllScheduleDays();
+  // 合宿期間が設定されている場合はその範囲内のみ表示。未設定なら全avail日付を表示
+  const dates=Object.keys(avail)
+    .filter(ds=>Object.keys(avail[ds]).length>0)
+    .filter(ds=>!scheduleDays.length||scheduleDays.includes(ds))
+    .sort();
   if(!dates.length){
     document.getElementById('bestDays').innerHTML='<p style="color:var(--muted);font-size:.81rem">まだ回答がありません。カレンダーの日付をタップして○✕を入力してください。</p>';
     renderCandidates([]);
@@ -1224,8 +1237,10 @@ function addDateRange(){
   saveAll(); renderSchedule();
 }
 function delDateRange(id){
-  if(!confirm('この期間を削除しますか？')) return;
+  if(!confirm('この期間を削除しますか？\n（この期間に登録した予定も削除されます）')) return;
   dateRanges=(dateRanges||[]).filter(dr=>dr.id!==id);
+  delete events[id]; // この期間の予定も削除
+  if(curRangeId===id) curRangeId=null;
   saveAll(); renderSchedule();
 }
 function renderDateRangeList(){
@@ -1234,14 +1249,21 @@ function renderDateRangeList(){
     el.innerHTML='<p style="color:var(--muted);font-size:.8rem;padding:4px 0">まだ期間が設定されていません</p>';
     return;
   }
-  el.innerHTML=(dateRanges||[]).map(dr=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd)">
-      <div style="flex:1;font-size:.86rem;font-weight:bold;color:var(--primary)">
+  el.innerHTML=(dateRanges||[]).map(dr=>{
+    const sel=dr.id===curRangeId;
+    const btnStyle=sel
+      ?'background:var(--primary);color:white;border-color:var(--primary)'
+      :'background:var(--bg);color:var(--primary);border-color:var(--bd)';
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bd)">
+      <button onclick="switchRange(${dr.id})" style="flex:1;text-align:left;padding:8px 11px;border-radius:9px;border:2px solid;font-size:.87rem;font-weight:bold;cursor:pointer;${btnStyle}">
         📅 ${dateLbl(dr.start)}${dr.start!==dr.end?' 〜 '+dateLbl(dr.end):''}
-      </div>
+      </button>
       <button onclick="delDateRange(${dr.id})" class="cat-del-btn">削除</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
+function switchRange(id){ curRangeId=id; curDay=null; renderSchedule(); }
 function setDateRange(){ addDateRange(); } // 旧API互換
 function daysInRange(s,e){
   const days=[]; let c=new Date(s+'T00:00:00'); const ed=new Date(e+'T00:00:00');
@@ -1255,13 +1277,17 @@ function daysInRange(s,e){
 }
 function renderSchedule(){
   renderDateRangeList();
-  const days=getAllScheduleDays();
-  if(!days.length){
+  const ranges=dateRanges||[];
+  if(!ranges.length){
     document.getElementById('dayTabsWrap').style.display='none';
     document.getElementById('addEvtArea').style.display='none';
     document.getElementById('schedContent').innerHTML='<div class="card"><p style="text-align:center;color:var(--muted);padding:16px 0">↑ 上で期間を追加してください</p></div>';
     return;
   }
+  // 選択中の期間が無効な場合は先頭の期間を選択
+  if(!curRangeId||!ranges.find(r=>r.id===curRangeId)) curRangeId=ranges[0].id;
+  const curRange=ranges.find(r=>r.id===curRangeId);
+  const days=daysInRange(curRange.start,curRange.end);
   if(!curDay||!days.includes(curDay)) curDay=days[0];
   document.getElementById('dayTabsWrap').style.display='block';
   document.getElementById('addEvtArea').style.display='block';
@@ -1275,7 +1301,8 @@ function switchDay(d){ curDay=d; renderSchedule(); }
 const ET={cleaning:'🧹 掃除',kids:'🎈 子供イベント',meal:'🍽 食事・会食',free:'☀️ 自由時間',general:'📌 一般・その他'};
 const EC={cleaning:'et-cleaning',kids:'et-kids',meal:'et-meal',free:'et-free',general:'et-general'};
 function renderDaySched(){
-  const evts=((events[curDay]||[]).slice()).sort((a,b)=>a.time.localeCompare(b.time));
+  const rangeEvs=(events[curRangeId]||{});
+  const evts=((rangeEvs[curDay]||[]).slice()).sort((a,b)=>a.time.localeCompare(b.time));
   if(!evts.length){
     document.getElementById('schedContent').innerHTML='<div class="card"><p style="text-align:center;color:var(--muted);padding:14px 0">まだ予定がありません。下から追加できます。</p></div>';
     return;
@@ -1304,16 +1331,18 @@ function addEvent(){
   const title=document.getElementById('evtTitle').value.trim();
   const desc=document.getElementById('evtDesc').value.trim();
   if(!title){alert('予定の名前を入力してください');return;}
-  if(!events[curDay]) events[curDay]=[];
+  if(!events[curRangeId]) events[curRangeId]={};
+  if(!events[curRangeId][curDay]) events[curRangeId][curDay]=[];
   const id=Date.now().toString();
-  events[curDay].push({id,time,type,title,desc});
+  events[curRangeId][curDay].push({id,time,type,title,desc});
   saveAll();
   document.getElementById('evtTitle').value='';
   document.getElementById('evtDesc').value='';
   renderDaySched();
 }
 function delEvent(id){
-  events[curDay]=(events[curDay]||[]).filter(e=>e.id!==id);
+  if(!events[curRangeId]) return;
+  events[curRangeId][curDay]=(events[curRangeId][curDay]||[]).filter(e=>e.id!==id);
   saveAll(); renderDaySched();
 }
 
@@ -1422,7 +1451,13 @@ function getCalEventsForDate(ds){
   return (calEvents||[]).filter(ev=>ev.start<=ds && ds<=ev.end);
 }
 function getSchedEventsForDate(ds){
-  return (events[ds]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
+  const allEvs=[];
+  Object.values(events).forEach(rangeEvs=>{
+    if(rangeEvs&&typeof rangeEvs==='object'&&!Array.isArray(rangeEvs)){
+      (rangeEvs[ds]||[]).forEach(ev=>allEvs.push(ev));
+    }
+  });
+  return allEvs.sort((a,b)=>a.time.localeCompare(b.time));
 }
 function evTypeEmoji(type){
   const m={cleaning:'🧹',kids:'🎈',meal:'🍽',free:'☀️',general:'📌'};
