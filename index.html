@@ -313,12 +313,14 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 <div id="tab-schedule" class="panel">
   <div class="card">
     <div class="card-title">📅 合宿期間を設定</div>
-    <div class="fl-form">
-      <div class="fl-row">
-        <div><div class="sec-lbl">開始日</div><input type="date" id="startDate"></div>
-        <div><div class="sec-lbl">終了日</div><input type="date" id="endDate"></div>
+    <div id="dateRangeList"></div>
+    <div class="fl-form" style="margin-top:9px">
+      <div class="sec-lbl">期間を追加（複数設定可）</div>
+      <div class="fl-row" style="margin-top:5px">
+        <div style="flex:1"><div class="sec-lbl">開始日</div><input type="date" id="startDate" style="width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:8px;font-size:.81rem"></div>
+        <div style="flex:1"><div class="sec-lbl">終了日</div><input type="date" id="endDate" style="width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:8px;font-size:.81rem"></div>
       </div>
-      <button class="btn" onclick="setDateRange()">設定する</button>
+      <button class="btn" onclick="addDateRange()" style="width:100%;margin-top:6px">追加する</button>
     </div>
   </div>
   <div id="dayTabsWrap" style="display:none"><div class="day-tabs" id="dayTabs"></div></div>
@@ -437,7 +439,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 
 <script>
 // ===== バージョン管理（古いキャッシュを自動排除）=====
-const APP_VERSION = '20260521-1';
+const APP_VERSION = '20260522-2';
 (function(){
   const stored = localStorage.getItem('appVersion');
   if(stored !== APP_VERSION){
@@ -533,7 +535,9 @@ let events        = ld('events', {});
 let notes         = ld('notes', []);
 let packing       = ld('packing', DEFAULT_PACKING);
 let packCategories= ld('packCategories', DEFAULT_PACK_CATS);
-let dateRange     = ld('dateRange', null);
+let dateRange     = ld('dateRange', null); // 旧バージョン互換用
+let dateRanges    = ld('dateRanges', []);
+let dateRangeIdCtr= ld('dateRangeIdCtr', 10);
 let taskIdCtr     = ld('taskIdCtr', {cleaning:20,meal:20,kids:20,other:20});
 let packIdCtr     = ld('packIdCtr', 200);
 let noteIdCtr     = ld('noteIdCtr', 200);
@@ -568,6 +572,11 @@ function migrateData(){
     packCategories = JSON.parse(JSON.stringify(DEFAULT_PACK_CATS));
     changed = true;
   }
+  // 旧dateRange → dateRanges配列に自動移行
+  if(dateRange && dateRange.start && (!dateRanges || !dateRanges.length)){
+    dateRanges=[{id:1, start:dateRange.start, end:dateRange.end}];
+    changed=true;
+  }
   if(changed) saveAll();
 }
 
@@ -588,7 +597,7 @@ function assignColor(assign){
 }
 
 function getFullState(){
-  return {families,tasks,avail,events,notes,packing,packCategories,dateRange,taskIdCtr,packIdCtr,noteIdCtr,calEvents,calEventIdCtr,lastModified:Date.now()};
+  return {families,tasks,avail,events,notes,packing,packCategories,dateRange,dateRanges,dateRangeIdCtr,taskIdCtr,packIdCtr,noteIdCtr,calEvents,calEventIdCtr,lastModified:Date.now()};
 }
 function applyState(data){
   if(data.families)       families=data.families;
@@ -604,6 +613,8 @@ function applyState(data){
   if(data.noteIdCtr)  noteIdCtr=data.noteIdCtr;
   if(data.calEvents!==undefined) calEvents=data.calEvents;
   if(data.calEventIdCtr) calEventIdCtr=data.calEventIdCtr;
+  if(data.dateRanges!==undefined) dateRanges=data.dateRanges;
+  if(data.dateRangeIdCtr) dateRangeIdCtr=data.dateRangeIdCtr;
   Object.entries(data).forEach(([k,v])=>{ try{localStorage.setItem(k,JSON.stringify(v));}catch{} });
   migrateData();
 }
@@ -852,9 +863,14 @@ function renderCalendar(){
     const evBadge=dayEvs.length
       ?`<div class="cev-row">${dayEvs.map(ev=>`<span class="cev-tag" style="background:${ev.color}">${ev.emoji}${esc(ev.name)}</span>`).join('')}</div>`
       :'';
+    const schedEvs=getSchedEventsForDate(ds);
+    const schedBadge=schedEvs.length
+      ?`<div class="cev-row">${schedEvs.map(ev=>`<span class="cev-tag" style="background:#546e7a;color:white">${evTypeEmoji(ev.type)} ${esc(ev.title)}</span>`).join('')}</div>`
+      :'';
     html+=`<div class="${cls}" onclick="openDayModal('${ds}')">
       <span style="color:${nc};font-size:1rem;font-weight:bold">${d}</span>
       ${evBadge}
+      ${schedBadge}
       <div class="slot-badge">${pips}</div>
       <div class="dot-row">${dots}</div>
     </div>`;
@@ -1013,6 +1029,8 @@ function renderMatrix(){
 
     const matEvs=getCalEventsForDate(ds);
     const matEvLabel=matEvs.map(ev=>`<div style="font-size:.6rem;color:${ev.color};font-weight:bold;margin-top:2px">${ev.emoji} ${esc(ev.name)}</div>`).join('');
+    const matSchedEvs=getSchedEventsForDate(ds);
+    const matSchedLabel=matSchedEvs.map(ev=>`<div style="font-size:.6rem;color:#546e7a;margin-top:2px">${evTypeEmoji(ev.type)} ${ev.time} ${esc(ev.title)}</div>`).join('');
     SLOTS.forEach((s,si)=>{
       const okCnt=slotOkCount(ds,s.key);
       const pct=okCnt/tot;
@@ -1023,7 +1041,7 @@ function renderMatrix(){
           ?`background:${rs.bg};border-left:${rs.border};color:${rs.textColor};font-weight:bold`
           :'';
         const medal=rs?`${rs.medal} `:'';
-        html+=`<td class="date-col" rowspan="3" style="${cellStyle}">${medal}${lbl}${matEvLabel}</td>`;
+        html+=`<td class="date-col" rowspan="3" style="${cellStyle}">${medal}${lbl}${matEvLabel}${matSchedLabel}</td>`;
       }
       html+=`<td class="slot-col" style="${rs?`background:${rs.bg}`:''}">` +
             `<span style="${rs?`color:${rs.textColor};font-weight:bold`:''}">${s.lbl}</span></td>`;
@@ -1190,29 +1208,60 @@ function addTask(cat){
 }
 
 // ===== SCHEDULE =====
-function setDateRange(){
+function getAllScheduleDays(){
+  const all=new Set();
+  (dateRanges||[]).forEach(dr=>daysInRange(dr.start,dr.end).forEach(d=>all.add(d)));
+  return [...all].sort();
+}
+function addDateRange(){
   const s=document.getElementById('startDate').value;
   const e=document.getElementById('endDate').value;
   if(!s||!e||s>e){alert('日程を正しく入力してください');return;}
-  dateRange={start:s,end:e}; saveAll(); renderSchedule();
+  dateRangeIdCtr++;
+  (dateRanges=dateRanges||[]).push({id:dateRangeIdCtr,start:s,end:e});
+  document.getElementById('startDate').value='';
+  document.getElementById('endDate').value='';
+  saveAll(); renderSchedule();
 }
+function delDateRange(id){
+  if(!confirm('この期間を削除しますか？')) return;
+  dateRanges=(dateRanges||[]).filter(dr=>dr.id!==id);
+  saveAll(); renderSchedule();
+}
+function renderDateRangeList(){
+  const el=document.getElementById('dateRangeList'); if(!el) return;
+  if(!(dateRanges||[]).length){
+    el.innerHTML='<p style="color:var(--muted);font-size:.8rem;padding:4px 0">まだ期間が設定されていません</p>';
+    return;
+  }
+  el.innerHTML=(dateRanges||[]).map(dr=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bd)">
+      <div style="flex:1;font-size:.86rem;font-weight:bold;color:var(--primary)">
+        📅 ${dateLbl(dr.start)}${dr.start!==dr.end?' 〜 '+dateLbl(dr.end):''}
+      </div>
+      <button onclick="delDateRange(${dr.id})" class="cat-del-btn">削除</button>
+    </div>`).join('');
+}
+function setDateRange(){ addDateRange(); } // 旧API互換
 function daysInRange(s,e){
   const days=[]; let c=new Date(s+'T00:00:00'); const ed=new Date(e+'T00:00:00');
-  while(c<=ed){days.push(c.toISOString().split('T')[0]);c.setDate(c.getDate()+1);}
+  while(c<=ed){
+    // toISOString()はUTC返しでJSTと1日ずれるため手動フォーマット
+    const y=c.getFullYear(),m=String(c.getMonth()+1).padStart(2,'0'),d=String(c.getDate()).padStart(2,'0');
+    days.push(`${y}-${m}-${d}`);
+    c.setDate(c.getDate()+1);
+  }
   return days;
 }
 function renderSchedule(){
-  if(dateRange){
-    document.getElementById('startDate').value=dateRange.start;
-    document.getElementById('endDate').value=dateRange.end;
-  }
-  if(!dateRange){
+  renderDateRangeList();
+  const days=getAllScheduleDays();
+  if(!days.length){
     document.getElementById('dayTabsWrap').style.display='none';
     document.getElementById('addEvtArea').style.display='none';
-    document.getElementById('schedContent').innerHTML='<div class="card"><p style="text-align:center;color:var(--muted);padding:16px 0">↑ 上で期間を設定してください</p></div>';
+    document.getElementById('schedContent').innerHTML='<div class="card"><p style="text-align:center;color:var(--muted);padding:16px 0">↑ 上で期間を追加してください</p></div>';
     return;
   }
-  const days=daysInRange(dateRange.start,dateRange.end);
   if(!curDay||!days.includes(curDay)) curDay=days[0];
   document.getElementById('dayTabsWrap').style.display='block';
   document.getElementById('addEvtArea').style.display='block';
@@ -1371,6 +1420,13 @@ function addPackItem(){
 // ===== CAL EVENTS =====
 function getCalEventsForDate(ds){
   return (calEvents||[]).filter(ev=>ev.start<=ds && ds<=ev.end);
+}
+function getSchedEventsForDate(ds){
+  return (events[ds]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
+}
+function evTypeEmoji(type){
+  const m={cleaning:'🧹',kids:'🎈',meal:'🍽',free:'☀️',general:'📌'};
+  return m[type]||'📌';
 }
 function renderCalEvList(){
   const el=document.getElementById('calEvList'); if(!el) return;
