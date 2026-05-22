@@ -439,7 +439,7 @@ body{font-family:'Hiragino Sans','Yu Gothic','Meiryo',sans-serif;background:var(
 
 <script>
 // ===== バージョン管理（古いキャッシュを自動排除）=====
-const APP_VERSION = '20260522-4';
+const APP_VERSION = '20260522-5';
 (function(){
   const stored = localStorage.getItem('appVersion');
   if(stored !== APP_VERSION){
@@ -579,11 +579,42 @@ function migrateData(){
     changed=true;
   }
   // 旧events形式（キーが日付文字列）→ 新形式（{rangeId: {date: [...]}}）に自動移行
+  // 各日付を「その日付を含む最初のrange」に振り分け、どのrangeにも属さない日付は破棄
   const evKeys=Object.keys(events);
   if(evKeys.length>0 && evKeys[0].includes('-') && evKeys[0].length===10){
-    const rid=(dateRanges&&dateRanges.length)?dateRanges[0].id:'legacy';
-    events={[rid]:events};
+    const newEvents={};
+    Object.entries(events).forEach(([ds,evArr])=>{
+      const matchRange=(dateRanges||[]).find(dr=>dr.start<=ds&&ds<=dr.end);
+      if(matchRange){
+        if(!newEvents[matchRange.id]) newEvents[matchRange.id]={};
+        newEvents[matchRange.id][ds]=evArr;
+      }
+      // どのrangeにも属さない日付のイベントは破棄
+    });
+    events=newEvents;
     changed=true;
+  }
+  // 新形式でも各rangeに属さない日付のイベントを削除（クリーンアップ）
+  // ※rangeを削除した際や旧移行で誤配置されたデータを修正
+  if(evKeys.length>0 && !evKeys[0].includes('-')){
+    let evCleaned=false;
+    const assignedDates={}; // ds -> 最初に割り当てたrangeId
+    (dateRanges||[]).forEach(dr=>{
+      const rDays=new Set(daysInRange(dr.start,dr.end));
+      if(!events[dr.id]) return;
+      Object.keys(events[dr.id]).forEach(ds=>{
+        if(!rDays.has(ds)){
+          // このrangeの範囲外の日付は削除
+          delete events[dr.id][ds]; evCleaned=true;
+        } else if(assignedDates[ds]!==undefined && assignedDates[ds]!==dr.id){
+          // 別のrangeに既に割り当て済みの日付も削除（重複排除）
+          delete events[dr.id][ds]; evCleaned=true;
+        } else {
+          assignedDates[ds]=dr.id;
+        }
+      });
+    });
+    if(evCleaned) changed=true;
   }
   if(changed) saveAll();
 }
